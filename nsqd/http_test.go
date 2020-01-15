@@ -232,7 +232,7 @@ func TestHTTPpubDefer(t *testing.T) {
 func TestHTTPSRequire(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.LogLevel = "debug"
+	opts.LogLevel = LOG_DEBUG
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSClientAuthPolicy = "require"
@@ -277,7 +277,7 @@ func TestHTTPSRequire(t *testing.T) {
 func TestHTTPSRequireVerify(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.LogLevel = "debug"
+	opts.LogLevel = LOG_DEBUG
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSRootCAFile = "./test/certs/ca.pem"
@@ -341,7 +341,7 @@ func TestHTTPSRequireVerify(t *testing.T) {
 func TestTLSRequireVerifyExceptHTTP(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = test.NewTestLogger(t)
-	opts.LogLevel = "debug"
+	opts.LogLevel = LOG_DEBUG
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSRootCAFile = "./test/certs/ca.pem"
@@ -525,6 +525,7 @@ func TestHTTPClientStats(t *testing.T) {
 				} `json:"clients"`
 			} `json:"channels"`
 		} `json:"topics"`
+		Memory *struct{} `json:"memory,omitempty"`
 	}
 
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/stats?format=json", httpAddr.Port)
@@ -533,6 +534,7 @@ func TestHTTPClientStats(t *testing.T) {
 
 	test.Equal(t, 1, len(d.Topics[0].Channels[0].Clients))
 	test.Equal(t, 1, d.Topics[0].Channels[0].ClientCount)
+	test.NotNil(t, d.Memory)
 
 	endpoint = fmt.Sprintf("http://127.0.0.1:%d/stats?format=json&include_clients=true", httpAddr.Port)
 	err = http_api.NewClient(nil, ConnectTimeout, RequestTimeout).GETV1(endpoint, &d)
@@ -547,6 +549,19 @@ func TestHTTPClientStats(t *testing.T) {
 
 	test.Equal(t, 0, len(d.Topics[0].Channels[0].Clients))
 	test.Equal(t, 1, d.Topics[0].Channels[0].ClientCount)
+
+	endpoint = fmt.Sprintf("http://127.0.0.1:%d/stats?format=json&include_mem=true", httpAddr.Port)
+	err = http_api.NewClient(nil, ConnectTimeout, RequestTimeout).GETV1(endpoint, &d)
+	test.Nil(t, err)
+
+	test.NotNil(t, d.Memory)
+
+	d.Memory = nil
+	endpoint = fmt.Sprintf("http://127.0.0.1:%d/stats?format=json&include_mem=false", httpAddr.Port)
+	err = http_api.NewClient(nil, ConnectTimeout, RequestTimeout).GETV1(endpoint, &d)
+	test.Nil(t, err)
+
+	test.Nil(t, d.Memory)
 }
 
 func TestHTTPgetStatusJSON(t *testing.T) {
@@ -633,28 +648,9 @@ func TestHTTPconfig(t *testing.T) {
 	defer resp.Body.Close()
 	body, _ = ioutil.ReadAll(resp.Body)
 	test.Equal(t, 200, resp.StatusCode)
-	test.Equal(t, LOG_FATAL, nsqd.getOpts().logLevel)
+	test.Equal(t, LOG_FATAL, nsqd.getOpts().LogLevel)
 
 	url = fmt.Sprintf("http://%s/config/log_level", httpAddr)
-	req, err = http.NewRequest("PUT", url, bytes.NewBuffer([]byte(`bad`)))
-	test.Nil(t, err)
-	resp, err = client.Do(req)
-	test.Nil(t, err)
-	defer resp.Body.Close()
-	body, _ = ioutil.ReadAll(resp.Body)
-	test.Equal(t, 400, resp.StatusCode)
-
-	url = fmt.Sprintf("http://%s/config/verbose", httpAddr)
-	req, err = http.NewRequest("PUT", url, bytes.NewBuffer([]byte(`true`)))
-	test.Nil(t, err)
-	resp, err = client.Do(req)
-	test.Nil(t, err)
-	defer resp.Body.Close()
-	body, _ = ioutil.ReadAll(resp.Body)
-	test.Equal(t, 200, resp.StatusCode)
-	test.Equal(t, true, nsqd.getOpts().Verbose)
-
-	url = fmt.Sprintf("http://%s/config/verbose", httpAddr)
 	req, err = http.NewRequest("PUT", url, bytes.NewBuffer([]byte(`bad`)))
 	test.Nil(t, err)
 	resp, err = client.Do(req)

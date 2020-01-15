@@ -17,6 +17,7 @@ import (
 type Topic struct {
 	// 64bit atomic vars need to be first for proper alignment on 32bit platforms
 	messageCount uint64
+	messageBytes uint64
 
 	sync.RWMutex
 
@@ -46,7 +47,7 @@ func NewTopic(topicName string, ctx *context, deleteCallback func(*Topic)) *Topi
 	t := &Topic{
 		name:              topicName,
 		channelMap:        make(map[string]*Channel),
-		memoryMsgChan:     make(chan *Message, ctx.nsqd.getOpts().MemQueueSize),
+		memoryMsgChan:     nil,
 		startChan:         make(chan int, 1),
 		exitChan:          make(chan int),
 		channelUpdateChan: make(chan int),
@@ -56,14 +57,17 @@ func NewTopic(topicName string, ctx *context, deleteCallback func(*Topic)) *Topi
 		deleteCallback:    deleteCallback,
 		idFactory:         NewGUIDFactory(ctx.nsqd.getOpts().ID),
 	}
-
+	// create mem-queue only if size > 0 (do not use unbuffered chan)
+	if ctx.nsqd.getOpts().MemQueueSize > 0 {
+		t.memoryMsgChan = make(chan *Message, ctx.nsqd.getOpts().MemQueueSize)
+	}
 	if strings.HasSuffix(topicName, "#ephemeral") {
 		t.ephemeral = true
 		t.backend = newDummyBackendQueue()
 	} else {
 		dqLogf := func(level diskqueue.LogLevel, f string, args ...interface{}) {
 			opts := ctx.nsqd.getOpts()
-			lg.Logf(opts.Logger, opts.logLevel, lg.LogLevel(level), f, args...)
+			lg.Logf(opts.Logger, opts.LogLevel, lg.LogLevel(level), f, args...)
 		}
 		t.backend = diskqueue.New(
 			topicName,
@@ -184,6 +188,7 @@ func (t *Topic) PutMessage(m *Message) error {
 		return err
 	}
 	atomic.AddUint64(&t.messageCount, 1)
+	atomic.AddUint64(&t.messageBytes, uint64(len(m.Body)))
 	return nil
 }
 
@@ -194,13 +199,20 @@ func (t *Topic) PutMessages(msgs []*Message) error {
 	if atomic.LoadInt32(&t.exitFlag) == 1 {
 		return errors.New("exiting")
 	}
+
+	messageTotalBytes := 0
+
 	for i, m := range msgs {
 		err := t.put(m)
 		if err != nil {
 			atomic.AddUint64(&t.messageCount, uint64(i))
+			atomic.AddUint64(&t.messageBytes, uint64(messageTotalBytes))
 			return err
 		}
+		messageTotalBytes += len(m.Body)
 	}
+
+	atomic.AddUint64(&t.messageBytes, uint64(messageTotalBytes))
 	atomic.AddUint64(&t.messageCount, uint64(len(msgs)))
 	return nil
 }
@@ -235,7 +247,7 @@ func (t *Topic) messagePump() {
 	var err error
 	var chans []*Channel
 	var memoryMsgChan chan *Message
-	var backendChan chan []byte
+	var backendChan <-chan []byte
 
 	// do not pass messages before Start(), but avoid blocking Pause() or GetChannel()
 	for {

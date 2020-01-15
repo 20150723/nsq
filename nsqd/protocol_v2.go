@@ -202,7 +202,7 @@ func (p *protocolV2) Exec(client *clientV2, params [][]byte) ([]byte, error) {
 func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 	var err error
 	var memoryMsgChan chan *Message
-	var backendMsgChan chan []byte
+	var backendMsgChan <-chan []byte
 	var subChannel *Channel
 	// NOTE: `flusherChan` is used to bound message latency for
 	// the pathological case of a channel on a low volume topic
@@ -615,7 +615,11 @@ func (p *protocolV2) SUB(client *clientV2, params [][]byte) ([]byte, error) {
 	for {
 		topic := p.ctx.nsqd.GetTopic(topicName)
 		channel = topic.GetChannel(channelName)
-		channel.AddClient(client.ID, client)
+		if err := channel.AddClient(client.ID, client); err != nil {
+			return nil, protocol.NewFatalClientErr(nil, "E_TOO_MANY_CHANNEL_CONSUMERS",
+				fmt.Sprintf("channel consumers for %s:%s exceeds limit of %d",
+					topicName, channelName, p.ctx.nsqd.getOpts().MaxChannelConsumers))
+		}
 
 		if (channel.ephemeral && channel.Exiting()) || (topic.ephemeral && topic.Exiting()) {
 			channel.RemoveClient(client.ID)
